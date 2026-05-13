@@ -1,0 +1,32 @@
+{
+  "name": "drop-deploy",
+  "version": "1.0.0",
+  "description": "Instant HTML hosting MCP server — deploy HTML files and ZIP projects, get a live URL immediately. No auth required.",
+  "url": "https://dropdeploy.co/api/mcp",
+  "tools": [
+    {
+      "name": "deploy_html",
+      "description": "Deploy an HTML string as a live public website. Returns the live URL.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "html": { "type": "string", "description": "Complete HTML content" },
+          "name": { "type": "string", "description": "Optional filename label" }
+        },
+        "required": ["html"]
+      }
+    },
+    {
+      "name": "deploy_zip",
+      "description": "Deploy a multi-file project from a base64-encoded ZIP containing an index.html. Returns the live URL.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "zip_base64": { "type": "string", "description": "Base64-encoded ZIP file contents" },
+          "name": { "type": "string", "description": "Optional project name" }
+        },
+        "required": ["zip_base64"]
+      }
+    }
+  ]
+}

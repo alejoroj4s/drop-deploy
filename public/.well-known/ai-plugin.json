@@ -1,0 +1,15 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Drop Deploy",
+  "name_for_model": "drop_deploy",
+  "description_for_human": "Deploy HTML files and web projects instantly. Get a live URL in seconds — no signup required.",
+  "description_for_model": "Drop Deploy is an instant HTML hosting service. Use it to deploy HTML files and ZIP web projects and get a live public URL immediately. Supports MCP protocol for seamless AI-assistant integration. Call deploy_html with HTML content to publish a page, or deploy_zip with base64-encoded ZIP to publish a multi-file project.",
+  "auth": { "type": "none" },
+  "api": {
+    "type": "openapi",
+    "url": "https://dropdeploy.co/.well-known/openapi.json"
+  },
+  "logo_url": "https://dropdeploy.co/brand/dropdeploy-isotype-dark-transparent.svg",
+  "contact_email": "hello@dropdeploy.co",
+  "legal_info_url": "https://dropdeploy.co"
+}

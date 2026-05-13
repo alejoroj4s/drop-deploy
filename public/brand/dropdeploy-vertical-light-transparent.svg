@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80" width="120" height="80">
+    
+    
+        <g transform="translate(48, 10)">
+    <line x1="16" y1="4" x2="10" y2="20" stroke="#09090b" stroke-width="3" stroke-linecap="square" fill="none"/>
+    <line x1="10" y1="4" x2="4" y2="20" stroke="#09090b" stroke-width="3" stroke-linecap="square" fill="none"/>
+    <rect x="18" y="16" width="4" height="4" fill="#09090b" stroke="none"/>
+  </g>
+        
+    <text x="60" y="65" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="700" letter-spacing="-0.04em" fill="#09090b" text-anchor="middle">dropdeploy</text>
+  
+      
+  </svg>

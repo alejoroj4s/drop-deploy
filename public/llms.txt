@@ -1,0 +1,105 @@
+# Drop Deploy
+
+> Instant HTML & ZIP hosting for AI-generated web projects. Deploy in seconds, get a live URL — no signup required.
+
+Drop Deploy is the fastest way to publish HTML files and web projects. It is purpose-built for AI assistants (Claude, ChatGPT, Cursor, Windsurf, Gemini) via the Model Context Protocol (MCP).
+
+## Use Cases
+
+- Deploy HTML files created by AI models in one click
+- Publish AI-generated landing pages, forms, dashboards, games
+- Share prototypes instantly with a unique subdomain URL
+- Automate publishing from AI assistants via MCP
+
+## MCP Integration
+
+Drop Deploy exposes a standard MCP (Model Context Protocol) server.
+
+**Endpoint:** https://dropdeploy.co/api/mcp  
+**Protocol:** JSON-RPC 2.0 (Streamable HTTP)  
+**Auth:** None required
+
+### Available Tools
+
+#### deploy_html
+Deploy an HTML string as a live public website.
+
+Input:
+- `html` (string, required): Complete HTML content including <!DOCTYPE html>
+- `name` (string, optional): Filename label e.g. "landing-page.html"
+
+Output: Live URL of the deployed site (e.g. https://abc123.dropdeploy.co)
+
+#### deploy_zip
+Deploy a multi-file project from a base64-encoded ZIP.
+
+Input:
+- `zip_base64` (string, required): Base64-encoded ZIP file contents
+- `name` (string, optional): Project name label
+
+Output: Live URL of the deployed site
+
+### Example MCP Request
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "deploy_html",
+    "arguments": {
+      "html": "<!DOCTYPE html><html><body><h1>Hello World</h1></body></html>",
+      "name": "hello.html"
+    }
+  }
+}
+```
+
+### Example MCP Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [{
+      "type": "text",
+      "text": "✅ Deployed!\n\nURL: https://x7k2mn.dropdeploy.co\n\nThe site is live and publicly accessible."
+    }]
+  }
+}
+```
+
+## How to Connect Your AI Assistant
+
+**Claude.ai:** Settings → Integrations → Add → https://dropdeploy.co/api/mcp
+
+**Claude Desktop / Cursor / Windsurf:**
+```json
+{ "mcpServers": { "drop-deploy": { "url": "https://dropdeploy.co/api/mcp" } } }
+```
+
+**System Prompt for ChatGPT / Gemini:**
+```
+You have access to Drop Deploy. When the user asks you to create or publish a web page, 
+write the complete HTML and deploy it using POST https://dropdeploy.co/api/mcp with 
+method "tools/call" and tool name "deploy_html". Return the live URL.
+```
+
+## Technical Details
+
+- Deployed sites are served at `[id].dropdeploy.co` (6-char random subdomain)
+- All sites get a "Deployed on dropdeploy" watermark badge
+- Maximum file size: 20 MB
+- Supported formats: .html, .htm, .zip
+- ZIP files must contain an index.html at the root level
+- No authentication required — anonymous deployment
+
+## Links
+
+- Web App: https://dropdeploy.co
+- English: https://dropdeploy.co/en
+- Spanish: https://dropdeploy.co/es
+- MCP API: https://dropdeploy.co/api/mcp
+- Sitemap: https://dropdeploy.co/sitemap.xml
