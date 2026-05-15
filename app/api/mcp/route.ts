@@ -92,10 +92,10 @@ const TOOLS = [
         },
         whatsapp: {
           type: 'string',
-          description: 'Optional WhatsApp phone number (with country code, e.g. +15551234567)',
+          description: 'WhatsApp phone number with country code (e.g. +15551234567). Required.',
         },
       },
-      required: ['email'],
+      required: ['email', 'whatsapp'],
     },
   },
   {
@@ -249,8 +249,9 @@ async function toolDeployZip(
   return url
 }
 
-async function toolRegisterUser(args: { email: string; whatsapp?: string }): Promise<object> {
+async function toolRegisterUser(args: { email: string; whatsapp: string }): Promise<object> {
   if (!args.email || !args.email.includes('@')) throw new Error('Valid email required')
+  if (!args.whatsapp || args.whatsapp.trim().length < 7) throw new Error('WhatsApp number with country code is required (e.g. +15551234567)')
 
   let user = getUserByEmail(args.email)
   const isNew = !user
@@ -374,7 +375,7 @@ async function handleMessage(msg: { id?: unknown; method: string; params?: unkno
           const url = await toolDeployZip(args as { zip_base64: string; name?: string; user_id?: number }, req)
           resultText = `Deployed!\n\nURL: ${url}\n\nThe site is live and publicly accessible.`
         } else if (name === 'register_user') {
-          const result = await toolRegisterUser(args as { email: string; whatsapp?: string })
+          const result = await toolRegisterUser(args as { email: string; whatsapp: string })
           resultText = JSON.stringify(result, null, 2)
         } else if (name === 'get_plans') {
           const plans = toolGetPlans()

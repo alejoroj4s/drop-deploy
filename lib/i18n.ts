@@ -14,6 +14,19 @@ type DictShape = {
   success: { status: string; copy: string; copied: string; open: string; newDeploy: string; footer: string }
   ai: { heading: string; sub: string; claude_web_label: string; claude_web_desc: string; claude_web_action: string; desktop_label: string; desktop_desc: string; desktop_action: string; prompt_label: string; prompt_desc: string; prompt_action: string; copy: string; copied: string; hint: string }
   nav: { mcp: string }
+  register: {
+    title: string
+    subtitle: string
+    email_label: string
+    email_placeholder: string
+    whatsapp_label: string
+    whatsapp_placeholder: string
+    whatsapp_hint: string
+    submit: string
+    submitting: string
+    disclaimer: string
+    free_limits: string
+  }
 }
 
 export const dict: Record<Lang, DictShape> = {
@@ -74,6 +87,19 @@ export const dict: Record<Lang, DictShape> = {
     nav: {
       mcp: 'MCP',
     },
+    register: {
+      title: 'Create your free account',
+      subtitle: 'Get 3 free deploys/month. Your link stays live for 48h.',
+      email_label: 'Email',
+      email_placeholder: 'you@example.com',
+      whatsapp_label: 'WhatsApp',
+      whatsapp_placeholder: '+1 555 000 0000',
+      whatsapp_hint: 'Include country code — e.g. +1, +44, +57',
+      submit: 'Create account & deploy',
+      submitting: 'Creating account…',
+      disclaimer: 'No spam. We store your contact to manage your plan.',
+      free_limits: 'Free: 3 deploys/month · expires in 48h',
+    },
   },
   es: {
     meta: {
@@ -132,5 +158,18 @@ export const dict: Record<Lang, DictShape> = {
     nav: {
       mcp: 'MCP',
     },
+    register: {
+      title: 'Crea tu cuenta gratuita',
+      subtitle: '3 deploys gratis al mes. Tu link dura 48h.',
+      email_label: 'Email',
+      email_placeholder: 'tu@email.com',
+      whatsapp_label: 'WhatsApp',
+      whatsapp_placeholder: '+57 300 000 0000',
+      whatsapp_hint: 'Incluye código de país — ej. +1, +44, +57',
+      submit: 'Crear cuenta y desplegar',
+      submitting: 'Creando cuenta…',
+      disclaimer: 'Sin spam. Guardamos tu contacto para gestionar tu plan.',
+      free_limits: 'Gratis: 3 deploys/mes · expira en 48h',
+    },
   },
-} 
+}
