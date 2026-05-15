@@ -7,14 +7,27 @@
  *   Cursor / Windsurf → MCP server URL setting
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir, readFile, writeFile as writeJson } from 'fs/promises'
+import { writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { customAlphabet } from 'nanoid'
 import AdmZip from 'adm-zip'
 import { injectWatermark } from '@/utils/watermark'
+import { injectFreeBanner } from '@/utils/banner'
+import {
+  createDeployment,
+  getUserByEmail,
+  createUser,
+  getDeploysRemaining,
+  incrementDeployCount,
+  resetMonthlyCountIfNeeded,
+  PLANS,
+  type PlanId,
+} from '@/lib/db'
+import { createCheckoutSession } from '@/lib/stripe'
+import { sendWelcomeEmail } from '@/lib/email'
+import { sendWelcomeWhatsApp } from '@/lib/whatsapp'
 
 const genId = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 6)
-const DEPLOYMENTS_FILE = join(process.cwd(), 'data', 'deployments.json')
 const SITES_DIR = join(process.cwd(), 'public', 'sites')
 
 // ─── MCP Tool definitions ────────────────────────────────────────────────────
@@ -35,6 +48,10 @@ const TOOLS = [
           type: 'string',
           description: 'Optional filename label, e.g. "landing-page.html"',
         },
+        user_id: {
+          type: 'number',
+          description: 'Optional user ID (obtained from register_user). Used to track plan limits.',
+        },
       },
       required: ['html'],
     },
@@ -54,23 +71,66 @@ const TOOLS = [
           type: 'string',
           description: 'Optional project name label',
         },
+        user_id: {
+          type: 'number',
+          description: 'Optional user ID (obtained from register_user). Used to track plan limits.',
+        },
       },
       required: ['zip_base64'],
     },
   },
+  {
+    name: 'register_user',
+    description:
+      'Register or retrieve a Drop Deploy user account. Call this before deploying if you want to track usage and plan limits. Returns user_id, current plan, and deploys remaining.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        email: {
+          type: 'string',
+          description: 'User email address',
+        },
+        whatsapp: {
+          type: 'string',
+          description: 'Optional WhatsApp phone number (with country code, e.g. +15551234567)',
+        },
+      },
+      required: ['email'],
+    },
+  },
+  {
+    name: 'get_plans',
+    description:
+      'Get all available Drop Deploy pricing plans with limits, prices, and features. Call this to show the user upgrade options.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'create_checkout',
+    description:
+      'Create a Stripe checkout session for upgrading a user plan. Returns a checkout_url to redirect the user to. Requires a user_id from register_user.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user_id: {
+          type: 'number',
+          description: 'User ID from register_user',
+        },
+        plan_id: {
+          type: 'string',
+          enum: ['starter', 'pro', 'single'],
+          description: 'Plan to upgrade to: starter ($7/month), pro ($19/month), single ($3 one-time)',
+        },
+      },
+      required: ['user_id', 'plan_id'],
+    },
+  },
 ]
 
-// ─── Helpers (shared with /api/deploy) ───────────────────────────────────────
-
-async function addDeployment(deployment: object) {
-  try {
-    const list = JSON.parse(await readFile(DEPLOYMENTS_FILE, 'utf-8'))
-    list.unshift(deployment)
-    await writeJson(DEPLOYMENTS_FILE, JSON.stringify(list.slice(0, 100), null, 2))
-  } catch {
-    await writeJson(DEPLOYMENTS_FILE, JSON.stringify([deployment], null, 2))
-  }
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getHomeUrl(req: NextRequest): string {
   const rootDomain = process.env.ROOT_DOMAIN
@@ -104,27 +164,64 @@ function extractZipFlattened(buffer: Buffer) {
 // ─── Tool handlers ────────────────────────────────────────────────────────────
 
 async function toolDeployHtml(
-  args: { html: string; name?: string },
+  args: { html: string; name?: string; user_id?: number },
   req: NextRequest
 ): Promise<string> {
   const id = genId()
   const siteDir = join(SITES_DIR, id)
   await mkdir(siteDir, { recursive: true })
   const homeUrl = getHomeUrl(req)
-  await writeFile(join(siteDir, 'index.html'), injectWatermark(args.html, homeUrl), 'utf-8')
+
+  let plan: PlanId = 'free'
+  let userId: number | null = null
+
+  if (args.user_id) {
+    const { getUserById } = await import('@/lib/db')
+    let user = getUserById(args.user_id)
+    if (user) {
+      user = resetMonthlyCountIfNeeded(user)
+      const remaining = getDeploysRemaining(user)
+      if (remaining <= 0) throw new Error(`Deploy limit reached for your ${user.plan} plan. Upgrade to continue.`)
+      userId = user.id
+      plan = user.plan as PlanId
+    }
+  }
+
+  const planConfig = PLANS[plan]
+  const html = planConfig.branding ? injectFreeBanner(args.html, homeUrl) : injectWatermark(args.html, homeUrl)
+  await writeFile(join(siteDir, 'index.html'), html, 'utf-8')
+
   const url = buildSiteUrl(id, req)
-  await addDeployment({ id, name: args.name ?? 'untitled.html', url, createdAt: new Date().toISOString() })
+  createDeployment({ site_id: id, user_id: userId, url, name: args.name ?? 'untitled.html', plan })
+  if (userId) incrementDeployCount(userId)
   return url
 }
 
 async function toolDeployZip(
-  args: { zip_base64: string; name?: string },
+  args: { zip_base64: string; name?: string; user_id?: number },
   req: NextRequest
 ): Promise<string> {
   const id = genId()
   const siteDir = join(SITES_DIR, id)
   await mkdir(siteDir, { recursive: true })
   const homeUrl = getHomeUrl(req)
+
+  let plan: PlanId = 'free'
+  let userId: number | null = null
+
+  if (args.user_id) {
+    const { getUserById } = await import('@/lib/db')
+    let user = getUserById(args.user_id)
+    if (user) {
+      user = resetMonthlyCountIfNeeded(user)
+      const remaining = getDeploysRemaining(user)
+      if (remaining <= 0) throw new Error(`Deploy limit reached for your ${user.plan} plan. Upgrade to continue.`)
+      userId = user.id
+      plan = user.plan as PlanId
+    }
+  }
+
+  const planConfig = PLANS[plan]
   const buffer = Buffer.from(args.zip_base64, 'base64')
   const { entries, stripPrefix } = extractZipFlattened(buffer)
 
@@ -138,7 +235,8 @@ async function toolDeployZip(
     const target = join(siteDir, relPath)
     await mkdir(dirname(target), { recursive: true })
     if (relPath.endsWith('.html') || relPath.endsWith('.htm')) {
-      await writeFile(target, injectWatermark(entry.getData().toString('utf-8'), homeUrl))
+      const html = entry.getData().toString('utf-8')
+      await writeFile(target, planConfig.branding ? injectFreeBanner(html, homeUrl) : injectWatermark(html, homeUrl))
     } else {
       await writeFile(target, entry.getData())
     }
@@ -146,8 +244,90 @@ async function toolDeployZip(
 
   if (!hasIndex) throw new Error('No index.html found in the ZIP')
   const url = buildSiteUrl(id, req)
-  await addDeployment({ id, name: args.name ?? 'project.zip', url, createdAt: new Date().toISOString() })
+  createDeployment({ site_id: id, user_id: userId, url, name: args.name ?? 'project.zip', plan })
+  if (userId) incrementDeployCount(userId)
   return url
+}
+
+async function toolRegisterUser(args: { email: string; whatsapp?: string }): Promise<object> {
+  if (!args.email || !args.email.includes('@')) throw new Error('Valid email required')
+
+  let user = getUserByEmail(args.email)
+  const isNew = !user
+
+  if (isNew) {
+    user = createUser(args.email, args.whatsapp)
+    // Fire-and-forget notifications (don't block response)
+    sendWelcomeEmail(args.email).catch(console.error)
+    if (args.whatsapp) sendWelcomeWhatsApp(args.whatsapp, args.email).catch(console.error)
+  } else if (args.whatsapp && user && !user.whatsapp) {
+    // Update whatsapp if not set
+    const { getDb } = await import('@/lib/db')
+    getDb().prepare('UPDATE users SET whatsapp = ? WHERE id = ?').run(args.whatsapp, user.id)
+    user = getUserByEmail(args.email)!
+  }
+
+  const refreshed = resetMonthlyCountIfNeeded(user!)
+  const remaining = getDeploysRemaining(refreshed)
+
+  return {
+    user_id: refreshed.id,
+    email: refreshed.email,
+    plan: refreshed.plan,
+    deploys_remaining: remaining === Infinity ? 'unlimited' : remaining,
+    message: isNew
+      ? `Welcome! Free account created with 3 deploys/month. Each deploy expires in 48h.`
+      : `Welcome back! You have ${remaining === Infinity ? 'unlimited' : remaining} deploys remaining this month.`,
+  }
+}
+
+function toolGetPlans(): object[] {
+  return Object.entries(PLANS).map(([id, p]) => ({
+    id,
+    name: p.name,
+    price_usd: p.price,
+    price_label: p.price === 0 ? 'Free' : id === 'single' ? `$${p.price} one-time` : `$${p.price}/month`,
+    deploys_per_month: p.deploysPerMonth === Infinity ? 'unlimited' : p.deploysPerMonth,
+    expiration: p.expiresAfterHours
+      ? `${p.expiresAfterHours}h`
+      : p.permanent
+      ? 'permanent'
+      : 'none',
+    branding: p.branding,
+    description: p.description,
+  }))
+}
+
+async function toolCreateCheckout(
+  args: { user_id: number; plan_id: string },
+  req: NextRequest
+): Promise<object> {
+  const base = getHomeUrl(req)
+  const validPlans = ['starter', 'pro', 'single'] as const
+  if (!validPlans.includes(args.plan_id as (typeof validPlans)[number])) {
+    throw new Error(`Invalid plan_id. Must be one of: ${validPlans.join(', ')}`)
+  }
+
+  const { getUserById } = await import('@/lib/db')
+  const user = getUserById(args.user_id)
+  if (!user) throw new Error(`User not found. Call register_user first.`)
+
+  const plan = args.plan_id as 'starter' | 'pro' | 'single'
+  const session = await createCheckoutSession({
+    user_id: args.user_id,
+    plan,
+    customer_id: user.stripe_customer_id ?? undefined,
+    success_url: `${base}/success?plan=${plan}`,
+    cancel_url: `${base}/en`,
+  })
+
+  const planConfig = PLANS[plan]
+  return {
+    checkout_url: session.url,
+    amount: planConfig.price,
+    plan_name: planConfig.name,
+    plan_id: plan,
+  }
 }
 
 // ─── JSON-RPC helpers ─────────────────────────────────────────────────────────
@@ -185,16 +365,29 @@ async function handleMessage(msg: { id?: unknown; method: string; params?: unkno
     case 'tools/call': {
       const { name, arguments: args } = params as { name: string; arguments: Record<string, unknown> }
       try {
-        let url: string
+        let resultText: string
+
         if (name === 'deploy_html') {
-          url = await toolDeployHtml(args as { html: string; name?: string }, req)
+          const url = await toolDeployHtml(args as { html: string; name?: string; user_id?: number }, req)
+          resultText = `Deployed!\n\nURL: ${url}\n\nThe site is live and publicly accessible.`
         } else if (name === 'deploy_zip') {
-          url = await toolDeployZip(args as { zip_base64: string; name?: string }, req)
+          const url = await toolDeployZip(args as { zip_base64: string; name?: string; user_id?: number }, req)
+          resultText = `Deployed!\n\nURL: ${url}\n\nThe site is live and publicly accessible.`
+        } else if (name === 'register_user') {
+          const result = await toolRegisterUser(args as { email: string; whatsapp?: string })
+          resultText = JSON.stringify(result, null, 2)
+        } else if (name === 'get_plans') {
+          const plans = toolGetPlans()
+          resultText = JSON.stringify(plans, null, 2)
+        } else if (name === 'create_checkout') {
+          const result = await toolCreateCheckout(args as { user_id: number; plan_id: string }, req)
+          resultText = JSON.stringify(result, null, 2)
         } else {
           return err(id, -32601, `Unknown tool: ${name}`)
         }
+
         return ok(id, {
-          content: [{ type: 'text', text: `✅ Deployed!\n\nURL: ${url}\n\nThe site is live and publicly accessible.` }],
+          content: [{ type: 'text', text: resultText }],
         })
       } catch (e) {
         return ok(id, {
@@ -254,7 +447,7 @@ export async function GET(req: NextRequest) {
     tools: TOOLS.map((t) => ({
       name: t.name,
       description: t.description,
-      required: t.inputSchema.required,
+      required: (t.inputSchema as { required?: string[] }).required ?? [],
     })),
     usage: {
       claude_ai: `Settings → Integrations → Add → ${base}/api/mcp`,

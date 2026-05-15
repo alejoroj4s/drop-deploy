@@ -1,29 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir, readFile, writeFile as writeJson } from 'fs/promises'
+import { writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { customAlphabet } from 'nanoid'
 import AdmZip from 'adm-zip'
 import { injectWatermark } from '@/utils/watermark'
+import { injectFreeBanner } from '@/utils/banner'
+import {
+  createDeployment,
+  getUserById,
+  getDeploysRemaining,
+  incrementDeployCount,
+  resetMonthlyCountIfNeeded,
+  PLANS,
+  type PlanId,
+} from '@/lib/db'
 
 const genId = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 6)
 
-const DEPLOYMENTS_FILE = join(process.cwd(), 'data', 'deployments.json')
 const SITES_DIR = join(process.cwd(), 'public', 'sites')
 const MAX_SIZE = 20 * 1024 * 1024
-
-async function getDeployments() {
-  try {
-    return JSON.parse(await readFile(DEPLOYMENTS_FILE, 'utf-8'))
-  } catch {
-    return []
-  }
-}
-
-async function addDeployment(deployment: object) {
-  const list = await getDeployments()
-  list.unshift(deployment)
-  await writeJson(DEPLOYMENTS_FILE, JSON.stringify(list.slice(0, 100), null, 2))
-}
 
 function extractZipFlattened(buffer: Buffer) {
   const zip = new AdmZip(buffer)
@@ -61,6 +56,7 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
     const file = formData.get('file') as File | null
+    const userIdRaw = formData.get('user_id') as string | null
 
     if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
 
@@ -72,12 +68,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'File exceeds 20 MB limit' }, { status: 400 })
     }
 
+    // ── Resolve user + plan ──────────────────────────────────────────────────
+    let userId: number | null = null
+    let plan: PlanId = 'free'
+
+    if (userIdRaw) {
+      const parsed = parseInt(userIdRaw, 10)
+      if (!isNaN(parsed)) {
+        let user = getUserById(parsed)
+        if (user) {
+          user = resetMonthlyCountIfNeeded(user)
+          const remaining = getDeploysRemaining(user)
+          if (remaining <= 0) {
+            return NextResponse.json(
+              { error: `Deploy limit reached for your ${user.plan} plan. Upgrade to continue.` },
+              { status: 429 }
+            )
+          }
+          userId = user.id
+          plan = user.plan as PlanId
+        }
+      }
+    }
+
     const id = genId()
     const siteDir = join(SITES_DIR, id)
     await mkdir(siteDir, { recursive: true })
 
     const buffer = Buffer.from(await file.arrayBuffer())
     const homeUrl = getHomeUrl(request)
+
+    // Pick watermark strategy based on plan
+    function addBranding(html: string): string {
+      const planConfig = PLANS[plan]
+      if (planConfig.branding) return injectFreeBanner(html, homeUrl)
+      return injectWatermark(html, homeUrl) // small pill for paid plans
+    }
 
     if (name.endsWith('.zip')) {
       const { entries, stripPrefix } = extractZipFlattened(buffer)
@@ -97,7 +123,7 @@ export async function POST(request: NextRequest) {
 
         if (relPath.endsWith('.html') || relPath.endsWith('.htm')) {
           const html = entry.getData().toString('utf-8')
-          await writeFile(target, injectWatermark(html, homeUrl))
+          await writeFile(target, addBranding(html))
         } else {
           await writeFile(target, entry.getData())
         }
@@ -108,14 +134,24 @@ export async function POST(request: NextRequest) {
       }
     } else {
       const html = buffer.toString('utf-8')
-      await writeFile(join(siteDir, 'index.html'), injectWatermark(html, homeUrl))
+      await writeFile(join(siteDir, 'index.html'), addBranding(html))
     }
 
     const url = buildSiteUrl(id, request)
-    const deployment = { id, name: file.name, url, createdAt: new Date().toISOString(), size: file.size }
 
-    await addDeployment(deployment)
-    return NextResponse.json(deployment)
+    // ── Persist to DB + increment counter ───────────────────────────────────
+    const deployment = createDeployment({ site_id: id, user_id: userId, url, name: file.name, plan })
+    if (userId) incrementDeployCount(userId)
+
+    return NextResponse.json({
+      id: deployment.site_id,
+      name: deployment.name,
+      url,
+      createdAt: deployment.created_at,
+      expiresAt: deployment.expires_at,
+      isPermanent: Boolean(deployment.is_permanent),
+      size: file.size,
+    })
   } catch (err) {
     console.error('[deploy]', err)
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
