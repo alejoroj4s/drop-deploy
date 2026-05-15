@@ -45,3 +45,6 @@ next-env.d.ts
 /public/sites/*
 !/public/sites/.gitkeep
 /data/deployments.json
+data/*.db
+data/*.db-shm
+data/*.db-wal
